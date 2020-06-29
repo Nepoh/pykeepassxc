@@ -22,4 +22,5 @@ so older versions may be supported as well)
 
 ## TODO
 - Implement more commands
+- Input validation/sanitization before passing to `subprocess.Popen()` probably would be a good idea
 - Write some tests?
