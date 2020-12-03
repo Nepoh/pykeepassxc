@@ -1,13 +1,14 @@
-from setuptools import setup
+from setuptools import find_packages, setup
 
 setup(name='pykeepassxc',
       version='0.1',
       description='A Python wrapper around the keepassxc-cli command.',
-      url='http://github.com/nepoh/pykeepassxc',
+      url='https://github.com/nepoh/pykeepassxc',
       author='Nepoh',
-      author_email='me@nepoh.eu',
+      author_email='hello@nepoh.eu',
       license='MIT',
-      packages=['pykeepassxc'],
+      packages=find_packages(where="src"),
+      package_dir={"": "src"},
       install_requires=[
           'packaging',
           'pexpect',
