@@ -10,7 +10,9 @@ setup(name='pykeepassxc',
       packages=find_packages(where="src"),
       package_dir={"": "src"},
       install_requires=[
-          'packaging',
           'pexpect',
+      ],
+      tests_require=[
+          'parameterized',
       ],
       zip_safe=False)
