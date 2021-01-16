@@ -113,6 +113,15 @@ class Database(IDatabase):
         paths = command.LocateEntriesCommand(self, term=term).execute()
         return [Entry(self, path) for path in paths]
 
+    def diff(self, database_from: IDatabase):
+        """
+        Show differences between this and another database.
+        (The changes that would be necessary if another database is merged into this database.)
+
+        :param database_from:
+        """
+        command.MergeDatabaseCommand(self, database_from).execute(dry_run=True)
+
     def merge(self, database_from: IDatabase):
         """
         Merge another database into this database.

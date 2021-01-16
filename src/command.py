@@ -303,7 +303,7 @@ class MergeDatabaseCommand(DatabaseCommand):
 
     def execute(self, check: bool = True, dry_run: bool = False) -> str:
         if dry_run:
-            self._options.append('--dry-execute')
+            self._options.append('--dry-run')
         return super().execute(check=check)
 
 
