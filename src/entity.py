@@ -6,17 +6,19 @@ import command
 
 
 class Database(IDatabase):
-    def __init__(self, path: str, password: str = None, key_file: str = None):
+    def __init__(self, path: str, password: str = None, key_file: str = None, yubikey_slot: str = None):
         """
 
         :param path: Path to the database file
         :param password: [optional] Password to open the database
         :param key_file: [optional] Path to the key-file to open the database
+        :param yubikey_slot: [optional]
         """
         assert os.path.exists(path), 'Database at {} does not exist.'.format(path)
         self._path = os.path.abspath(path)
         self._password = password
         self._key_file = os.path.abspath(key_file) if key_file is not None else None
+        self._yubikey_slot = yubikey_slot
 
     def get_path(self) -> str:
         return self._path
@@ -32,6 +34,12 @@ class Database(IDatabase):
 
     def get_key_file(self) -> Optional[str]:
         return self._key_file
+
+    def has_yubikey_slot(self) -> bool:
+        return self._yubikey_slot is not None
+
+    def get_yubikey_slot(self) -> Optional[str]:
+        return self._yubikey_slot
 
     def create(self, decryption_time: int = None):
         """

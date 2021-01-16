@@ -192,6 +192,9 @@ class DatabaseCommand(Command):
         if self._database.has_key_file():
             options.append('--key-file')
             options.append(self._database.get_key_file())
+        if database.has_yubikey_slot():
+            options.append('--yubikey')
+            options.append(self._database.get_yubikey_slot())
 
         super().__init__(command, options, full_args)
 
