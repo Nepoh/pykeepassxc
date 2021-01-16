@@ -6,11 +6,10 @@ import command
 
 
 class Database(IDatabase):
-    def __init__(self, path: str, password: str = None, key_file: str = None, yubikey_slot: str = None):
+    def __init__(self, path: str, password: str = None, key_file: str = None):
         self._path = os.path.abspath(path)
         self._password = password
         self._key_file = key_file
-        self._yubikey_slot = yubikey_slot
 
     def get_path(self) -> str:
         return self._path
@@ -26,12 +25,6 @@ class Database(IDatabase):
 
     def get_key_file(self) -> Optional[str]:
         return self._key_file
-
-    def has_yubikey_slot(self) -> bool:
-        return self._yubikey_slot is not None
-
-    def get_yubikey_slot(self) -> Optional[str]:
-        return self._yubikey_slot
 
     def create(self, decryption_time: int = None):
         """

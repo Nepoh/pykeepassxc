@@ -186,9 +186,6 @@ class DatabaseCommand(Command):
         if database.has_key_file():
             options.append('--key-file')
             options.append('"{}"'.format(database.get_key_file()))
-        if database.has_yubikey_slot():
-            options.append('--yubikey')
-            options.append('"{}"'.format(database.get_yubikey_slot()))
 
         super().__init__(command, options, full_args)
 

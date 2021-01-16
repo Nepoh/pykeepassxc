@@ -41,15 +41,14 @@ def estimate_password(password: str) -> dict:
     return command.EstimatePasswordCommand(password).execute()
 
 
-def create_database(path: str, password: str = None, key_file: str = None, yubikey_slot: str = None,
-                    decryption_time: int = None) -> IDatabase:
+def create_database(path: str, password: str = None, key_file: str = None, decryption_time: int = None) -> IDatabase:
     """
     A wrapper around :py:meth:`~entity.Database.create`.
 
     :return: The newly created database
     :raise IOError: If the database file already exists and `decryption_time` has been specified.
     """
-    database = Database(path, password, key_file, yubikey_slot)
+    database = Database(path, password, key_file)
     if not database.exists():
         database.create(decryption_time)
     elif decryption_time is not None:
