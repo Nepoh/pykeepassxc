@@ -14,5 +14,6 @@ setup(name='pykeepassxc',
       ],
       tests_require=[
           'parameterized',
+          'lxml',
       ],
       zip_safe=False)

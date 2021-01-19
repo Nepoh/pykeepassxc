@@ -3,9 +3,9 @@ import os
 import re
 import shlex
 import subprocess
-from typing import List, Tuple, Optional, Set
+from typing import List, Tuple, Optional, Set, Union
 import pexpect
-from interface import ICommand, IDatabase
+from interface import ICommand, IDatabase, IGroup, IEntry
 
 
 class GeneratePasswordConfig:
@@ -225,6 +225,44 @@ class DatabaseCommand(Command):
         return child.before
 
 
+class CreateDatabaseCommand(DatabaseCommand):
+    def __init__(self, database: IDatabase, decryption_time: int = None):
+        self._database = database
+
+        args = [database.get_path()]
+        options = []
+
+        if database.has_password():
+            options.append('--set-password')
+
+        if database.has_key_file():
+            options.append('--set-key-file')
+            options.append(shlex.quote(database.get_key_file()))
+
+        if decryption_time is not None:
+            assert isinstance(decryption_time, int)
+            options.append('--decryption-time')
+            options.append('{:d}'.format(decryption_time))
+
+        super(DatabaseCommand, self).__init__('db-create', options=options, args=args)
+
+    def execute(self, check: bool = True) -> str:
+        if os.path.exists(self._database.get_path()):
+            raise IOError('Database already exists at "{}"'.format(self._database.get_path()))
+        return super().execute(check)
+
+    def _run_expect(self, child: pexpect.spawn) -> Optional[str]:
+        if self._database.has_password():
+            child.expect('Enter password to encrypt database \(optional\):')
+            child.sendline(self._database.get_password())
+            child.expect('Repeat password: ')
+            child.sendline(self._database.get_password())
+            child.expect('Successfully created new database.')
+            return child.before
+        else:
+            return child.read()
+
+
 class DatabaseInfoCommand(DatabaseCommand):
     def __init__(self, database: IDatabase):
         super().__init__(database, 'db-info')
@@ -276,14 +314,19 @@ class ExportDatabaseCommand(DatabaseCommand):
         super().__init__(database, 'export', options=options)
 
 
-class CompareDatabaseCommand(DatabaseCommand):
+class ImportDatabaseCommand(DatabaseCommand):
+    def __init__(self, database: IDatabase, path: str):
+        super().__init__(database, 'import', pre_args=[path])
+
+
+class MergeDatabaseCommand(DatabaseCommand):
     def __init__(self, database: IDatabase, database_from: IDatabase):
         self._database_from = database_from
 
         args = []
         args.append(self._database_from.get_path())
 
-        options = ['--dry-run']
+        options = []
         if not self._database_from.has_password():
             options.append('--no-password-from')
         if self._database_from.has_key_file():
@@ -292,8 +335,10 @@ class CompareDatabaseCommand(DatabaseCommand):
 
         super().__init__(database, 'merge', options=options, args=args)
 
-    def execute(self, check: bool = True) -> Set[str]:
-        output = super().execute(check)
+    def execute(self, check: bool = True, dry_run: bool = False) -> Set[str]:
+        if dry_run:
+            self._options.append('--dry-run')
+        output = super().execute(check=check)
         return {l.strip() for l in output.splitlines(keepends=False)}
 
     def _run_expect(self, child: pexpect.spawn) -> Optional[str]:
@@ -303,5 +348,120 @@ class CompareDatabaseCommand(DatabaseCommand):
         if self._database_from.has_password():
             child.expect('Enter password to unlock {}: '.format(self._database_from.get_path()))
             child.sendline(self._database_from.get_password())
-        child.expect('Database was not modified by merge operation.')
+        child.expect(pexpect.EOF)
         return child.before
+
+
+class CompareDatabaseCommand(MergeDatabaseCommand):
+    def execute(self, check: bool = True, dry_run: bool = True) -> Set[str]:
+        assert dry_run
+        return super().execute(check=check, dry_run=True)
+
+
+class ListEntriesCommand(DatabaseCommand):
+    def __init__(self, database: IDatabase):
+        super().__init__(database, 'ls')
+
+    def execute(self, check: bool = True) -> List[str]:
+        output = super().execute(check)
+        return output.splitlines()
+
+
+class LocateEntriesCommand(DatabaseCommand):
+    def __init__(self, database: IDatabase, term: str):
+        super().__init__(database, 'locate', args=[term])
+
+    def execute(self, check: bool = True) -> List[str]:
+        output = super().execute(check)
+        return output.splitlines()
+
+
+class CreateEntryCommand(DatabaseCommand):
+    def __init__(self, database: IDatabase, entry: IEntry):
+        options = []
+        # FIXME
+        if isinstance(password, str):
+            options.append('--password-prompt')
+        elif isinstance(password, GeneratePasswordConfig):
+            options.append('--generate')
+            options += password.get_command_options()
+
+        if username is not None:
+            options.append('--username')
+            options.append(shlex.quote(password))
+
+        if entry.get_url() is not None:
+            options.append('--url')
+            options.append(shlex.quote(url))
+
+        super().__init__(database, 'add', options=options)
+
+    def _run_expect(self, child: pexpect.spawn) -> Optional[str]:
+        if self._database.has_password():
+            child.expect('Enter password to encrypt database \(optional\):')
+            child.sendline(self._database.get_password())
+            child.expect('Enter password for new entry: ')
+            child.sendline(self._database.get_password())
+            child.expect('Successfully added entry {}.')
+            return child.before
+        else:
+            return child.read()
+
+
+class ShowEntryCommand(DatabaseCommand):
+    # TODO
+    pass
+
+
+class ClipEntryCommand(DatabaseCommand):
+    def __init__(self, database: IDatabase, entry: IEntry, attribute: str = None, timeout: int = None):
+        assert database is entry.get_database()
+
+        if attribute is None:
+            options = None
+        else:
+            options = ['--attribute', attribute]
+
+        args = [entry.get_path()]
+        if timeout is not None:
+            args.append('{:d}'.format(timeout))
+
+        super().__init__(database, 'clip', options=options, args=args)
+
+
+class EditEntryCommand(CreateEntryCommand):
+    def __init__(self, database: IDatabase, entry: IEntry, password: Union[str, GeneratePasswordConfig] = None,
+                 username: str = None, url: str = None, title: str = None):
+        assert database is entry.get_database()
+
+        # FIXME
+        if title is not None:
+            self._options.append('--title')
+            self._options.append(shlex.quote(title))
+
+        super().__init__(database, entry.get_path(), password, username, url)
+
+
+class MoveEntryCommand(DatabaseCommand):
+    def __init__(self, database: IDatabase, entry: IEntry, group: IGroup):
+        assert database is entry.get_database()
+        assert database is group.get_database()
+        super().__init__(database, 'mv', args=[entry.get_path(), group.get_path()])
+
+
+class RemoveEntryCommand(DatabaseCommand):
+    def __init__(self, database: IDatabase, entry: IEntry):
+        assert database is entry.get_database()
+        super().__init__(database, 'rm', args=[entry.get_path()])
+
+
+class CreateGroupCommand(DatabaseCommand):
+    def __init__(self, database: IDatabase, group: IGroup):
+        assert database is group.get_database()
+        super().__init__(database, 'mkdir', args=[group.get_path()])
+
+
+class RemoveGroupCommand(DatabaseCommand):
+    def __init__(self, database: IDatabase, group: IGroup):
+        assert database is group.get_database()
+        super().__init__(database, 'rmdir', args=[group.get_path()])

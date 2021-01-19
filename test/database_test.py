@@ -1,7 +1,8 @@
 import logging
 import os
+import secrets
+import tempfile
 import unittest
-
 from abc import ABC
 from xml.etree import ElementTree
 from entity import Database
@@ -9,11 +10,51 @@ from entity import Database
 logging.basicConfig(level=logging.DEBUG)
 
 
+class CreateDatabaseTest(unittest.TestCase):
+    def setUp(self):
+        temp_dir = tempfile.gettempdir()
+
+        self.database_path = os.path.join(temp_dir, 'test_create.kdbx')
+        self.assertFalse(os.path.exists(self.database_path))
+
+        self.keyfile_path = os.path.join(temp_dir, 'test_create.key')
+        with open(self.keyfile_path, 'wb') as f:
+            f.write(secrets.token_bytes(100))
+
+    def tearDown(self):
+        if os.path.exists(self.database_path):
+            os.remove(self.database_path)
+        os.remove(self.keyfile_path)
+
+    def test_create_database_with_password(self):
+        database = Database(self.database_path, password='1234')
+        database.create()
+        self.assertTrue(os.path.exists(self.database_path))
+
+    def test_create_database_with_keyfile(self):
+        database = Database(self.database_path, key_file=self.keyfile_path)
+        database.create()
+        self.assertTrue(os.path.exists(self.database_path))
+
+    def test_create_database_with_password_and_keyfile(self):
+        database = Database(self.database_path, password='1234', key_file=self.keyfile_path)
+        database.create()
+        self.assertTrue(os.path.exists(self.database_path))
+
+    def test_create_database_without_key_fails(self):
+        database = Database(self.database_path)
+        with self.assertRaises(Exception):
+            database.create()
+
+
 class AbstractDatabaseTest(unittest.TestCase, ABC):
     def setUp(self):
         self.database = None
         self.database_file = None
         raise NotImplementedError
+
+    def test_exists(self):
+        self.assertTrue(self.database.exists())
 
     def test_get_path(self):
         self.assertEqual(
@@ -118,6 +159,9 @@ class UnicodePasswordDatabaseTest(AbstractDatabaseTest):
         self.password = 'passwörter123&'
         self.database = Database(self.database_file, password=self.password)
 
+    def test_exists(self):
+        self.assertTrue(self.database.exists())
+
     def test_get_info(self):
         self.assertSetEqual(
             set(self.database.get_info().keys()),
@@ -133,10 +177,14 @@ class UnicodePasswordDatabaseTest(AbstractDatabaseTest):
         self.assertIn('<DatabaseName>Passwörter</DatabaseName>', self.database.export(format='xml'))
 
 
-class CompareDatabaseTest(unittest.TestCase):
+class DatabasePairTest(unittest.TestCase):
     def setUp(self):
         self.database_1 = Database('assets/new.kdbx', password='1234')
         self.database_2 = Database('assets/merge.kdbx', password='merge')
+
+    def test_exists(self):
+        self.assertTrue(self.database_1.exists())
+        self.assertTrue(self.database_2.exists())
 
     def test_compare(self):
         changes = self.database_1.compare(self.database_2)
@@ -148,7 +196,7 @@ class CompareDatabaseTest(unittest.TestCase):
         )
 
 
-class CompareKeyfileDatabaseTest(CompareDatabaseTest):
+class KeyfileDatabasePairTest(DatabasePairTest):
     def setUp(self):
         self.database_file_1 = 'assets/keyfile.kdbx'
         self.key_file_1 = 'assets/keyfile.key'
@@ -167,7 +215,7 @@ class CompareKeyfileDatabaseTest(CompareDatabaseTest):
         )
 
 
-class CompareIdenticalDatabaseTest(CompareDatabaseTest):
+class IdenticalDatabasePairTest(DatabasePairTest):
     def setUp(self):
         self.database_1 = Database('assets/merge.kdbx', password='merge')
         self.database_2 = Database('assets/merge.kdbx', password='merge')
