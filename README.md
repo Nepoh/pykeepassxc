@@ -38,5 +38,7 @@ pip install -e .
 
 ## TODO
 - Implement more commands
-- Input validation/sanitization before passing to `subprocess.Popen()` probably would be a good idea
-- Write some tests?
+
+## See
+- https://keepassxc.org/
+- https://www.mankier.com/1/keepassxc-cli
