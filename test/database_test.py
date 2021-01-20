@@ -27,7 +27,7 @@ class AbstractDatabaseTest(unittest.TestCase, ABC):
             {"uuid", "name", "description", "cipher", "kdf"}
         )
 
-    def test_export_csv(self):
+    def test_export(self):
         self.database.export()
 
     def test_export_csv(self):
