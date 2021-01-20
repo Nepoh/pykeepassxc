@@ -1,11 +1,11 @@
-import json
 import logging
 import os
 import re
+import shlex
 import subprocess
-from typing import List, Union, Tuple, Optional
+from typing import List, Tuple, Optional, Set
 import pexpect
-from interface import ICommand, IDatabase, IGroup, IEntry
+from interface import ICommand, IDatabase
 
 
 class GeneratePasswordConfig:
@@ -43,7 +43,7 @@ class GeneratePasswordConfig:
 
         if self.exclude_chars is not None:
             options.append('--exclude')
-            options.append('"{}"'.format(''.join(self.exclude_chars)))
+            options.append(''.join(self.exclude_chars))
 
         if self.lowercase:
             options.append('--lower')
@@ -69,7 +69,7 @@ class Command(ICommand):
         self._options = options if options is not None else []
         self._args = args if args is not None else []
         self._encoding = 'utf-8'
-        self._env = {'LANGUAGE': 'en_US'}
+        self._env = {'LC_ALL': 'en_US.UTF-8'}
         self.stdout = None
         self.stderr = None
         self.return_code = None
@@ -99,7 +99,8 @@ class Command(ICommand):
                 raise subprocess.CalledProcessError(self.return_code, command, self.stdout, self.stderr)
 
     def _build_command(self) -> List[str]:
-        parts = []
+        executable = os.getenv('KEEPASSXC_CLI_EXE', 'keepassxc-cli')
+        parts = [executable]
 
         if self._command is not None:
             parts.append(self._command)
@@ -110,8 +111,7 @@ class Command(ICommand):
             parts.append('--')
             parts += self._args
 
-        executable = os.getenv('KEEPASSXC_CLI_EXE', 'keepassxc-cli')
-        return [executable] + parts  # [self.quote(part) for part in parts]
+        return [self.quote(part) for part in parts]
 
     def _run_subprocess(self, command: List[str]) -> Tuple[int, str, str]:
         process = subprocess.Popen(
@@ -126,8 +126,8 @@ class Command(ICommand):
         return process.returncode, stdout, stderr
 
     @staticmethod
-    def quote(arg: str) -> str:
-        return json.dumps(arg)
+    def quote(string: str) -> str:
+        return shlex.quote(string)
 
 
 class GeneratePasswordCommand(Command):
@@ -183,9 +183,15 @@ class DatabaseCommand(Command):
         if args is not None:
             full_args += args
 
-        if database.has_key_file():
+        if options is None:
+            options = []
+
+        if not self._database.has_password():
+            options.append('--no-password')
+
+        if self._database.has_key_file():
             options.append('--key-file')
-            options.append('"{}"'.format(database.get_key_file()))
+            options.append(self._database.get_key_file())
 
         super().__init__(command, options, full_args)
 
@@ -212,48 +218,11 @@ class DatabaseCommand(Command):
         return return_code, stdout.strip(), stderr.strip()
 
     def _run_expect(self, child: pexpect.spawn) -> Optional[str]:
-        child.expect('Enter password to unlock {}: '.format(self._database.get_path()))
-        child.sendline(self._database.get_password())
-        child.expect(pexpect.EOF)
-        return child.read()
-
-
-class CreateDatabaseCommand(DatabaseCommand):
-    def __init__(self, database: IDatabase, decryption_time: int = None):
-        self._database = database
-
-        args = [database.get_path()]
-        options = []
-
-        if database.has_password():
-            options.append('--set-password')
-
-        if database.has_key_file():
-            options.append('--set-key-file')
-            options.append(database.get_key_file())
-
-        if decryption_time is not None:
-            assert isinstance(decryption_time, int)
-            options.append('--decryption-time')
-            options.append('{:d}'.format(decryption_time))
-
-        super(DatabaseCommand, self).__init__('db-create', options=options, args=args)
-
-    def execute(self, check: bool = True) -> str:
-        if os.path.exists(self._database.get_path()):
-            raise IOError('Database already exists at "{}"'.format(self._database.get_path()))
-        return super().execute(check)
-
-    def _run_expect(self, child: pexpect.spawn) -> Optional[str]:
         if self._database.has_password():
-            child.expect('Enter password to encrypt database \(optional\):')
+            child.expect('Enter password to unlock {}: '.format(self._database.get_path()))
             child.sendline(self._database.get_password())
-            child.expect('Repeat password: ')
-            child.sendline(self._database.get_password())
-            child.expect('Successfully created new database.')
-            return child.before
-        else:
-            return child.read()
+        child.expect(pexpect.EOF)
+        return child.before
 
 
 class DatabaseInfoCommand(DatabaseCommand):
@@ -261,11 +230,27 @@ class DatabaseInfoCommand(DatabaseCommand):
         super().__init__(database, 'db-info')
 
     def execute(self, check: bool = True) -> dict:
+        output = super().execute()
+        assert len(output) > 0
+        return self._parse_output(output)
+
+    @staticmethod
+    def _parse_output(output: str) -> dict:
+        """
+        UUID: {deaedbd6-2d29-49f4-9357-3d16ca00e716}
+        Name: Passwörter
+        Description:
+        Cipher: AES 256-bit
+        KDF: Argon2 (20 rounds, 65536 KB)
+        Recycle bin is enabled.
+        """
         info = {}
-        pattern = re.compile('^([A-Za-z]+):(.*)$')
-        for line in super().execute():
-            k, v = pattern.match(line).groups()
-            info[k.lower()] = v
+        pattern = re.compile('^([A-Za-z]+):\s+(.*)$')
+        for line in output.splitlines():
+            m = pattern.match(line)
+            if m:
+                k, v = m.groups()
+                info[k.lower()] = v
         return info
 
 
@@ -288,112 +273,35 @@ class ExportDatabaseCommand(DatabaseCommand):
             options = ['--format', format]
 
         # in earlier versions "export" was called "extract"
-        super().__init__(database, 'export', options)
+        super().__init__(database, 'export', options=options)
 
 
-class ImportDatabaseCommand(DatabaseCommand):
-    def __init__(self, database: IDatabase, path: str):
-        super().__init__(database, 'import', pre_args=[path])
-
-
-class MergeDatabaseCommand(DatabaseCommand):
+class CompareDatabaseCommand(DatabaseCommand):
     def __init__(self, database: IDatabase, database_from: IDatabase):
-        super().__init__(database, 'merge')
         self._database_from = database_from
 
-    def execute(self, check: bool = True, dry_run: bool = False) -> str:
-        if dry_run:
-            self._options.append('--dry-run')
-        return super().execute(check=check)
+        args = []
+        args.append(self._database_from.get_path())
 
+        options = ['--dry-run']
+        if not self._database_from.has_password():
+            options.append('--no-password-from')
+        if self._database_from.has_key_file():
+            options.append('--key-file-from')
+            options.append(self._database_from.get_key_file())
 
-class ListEntriesCommand(DatabaseCommand):
-    def __init__(self, database: IDatabase):
-        super().__init__(database, 'ls')
+        super().__init__(database, 'merge', options=options, args=args)
 
-    def execute(self, check: bool = True) -> List[str]:
+    def execute(self, check: bool = True) -> Set[str]:
         output = super().execute(check)
-        return output.splitlines()
+        return {l.strip() for l in output.splitlines(keepends=False)}
 
-
-class LocateEntriesCommand(DatabaseCommand):
-    def __init__(self, database: IDatabase, term: str):
-        super().__init__(database, 'locate', args=[term])
-
-    def execute(self, check: bool = True) -> List[str]:
-        output = super().execute(check)
-        return output.splitlines()
-
-
-class CreateEntryCommand(DatabaseCommand):
-    def __init__(self, database: IDatabase, path: str, password: Union[str, GeneratePasswordConfig] = None,
-                 username: str = None, url: str = None):
-        super().__init__(database, 'add')
-        options = []
-        if isinstance(password, str):
-            options.append('--password-prompt')
-        elif isinstance(password, GeneratePasswordConfig):
-            options.append('--generate')
-            options += password.get_command_options()
-
-        if username is not None:
-            options.append('--username')
-            options.append(password)
-
-        if url is not None:
-            options.append('--url')
-            options.append(url)
-
-
-    # TODO handle password prompt
-
-
-class ShowEntryCommand(DatabaseCommand):
-    # TODO
-    pass
-
-
-class ClipEntryCommand(DatabaseCommand):
-    def __init__(self, database: IDatabase, entry: IEntry, attribute: str = None, timeout: int = None):
-        if attribute is None:
-            options = None
-        else:
-            options = ['--attribute', attribute]
-
-        args = [entry.get_path()]
-        if timeout is not None:
-            args.append('{:d}'.format(timeout))
-
-        super().__init__(database, 'clip', options=options, args=args)
-
-
-class EditEntryCommand(CreateEntryCommand):
-    def __init__(self, database: IDatabase, path: str, password: Union[str, GeneratePasswordConfig] = None,
-                 username: str = None, url: str = None, title: str = None):
-        super().__init__(database, path, password, username, url)
-        # FIXME
-        if title is not None:
-            self._options.append('--title')
-            self._options.append(title)
-
-
-class MoveEntryCommand(DatabaseCommand):
-    def __init__(self, database: IDatabase, entry: IEntry, group: IGroup):
-        super().__init__(database, 'mv', args=[entry.get_path(), group.get_path()])
-
-
-class RemoveEntryCommand(DatabaseCommand):
-    def __init__(self, database: IDatabase, entry: IEntry):
-        super().__init__(database, 'rm', args=[entry.get_path()])
-
-
-class CreateGroupCommand(DatabaseCommand):
-    def __init__(self, database: IDatabase, group: IGroup):
-        super().__init__(database, 'mkdir', args=[group.get_path()])
-        self.__group = group
-
-
-class RemoveGroupCommand(DatabaseCommand):
-    def __init__(self, database: IDatabase, group: IGroup):
-        super().__init__(database, 'rmdir', args=[group.get_path()])
-        self.__group = group
+    def _run_expect(self, child: pexpect.spawn) -> Optional[str]:
+        if self._database.has_password():
+            child.expect('Enter password to unlock {}: '.format(self._database.get_path()))
+            child.sendline(self._database.get_password())
+        if self._database_from.has_password():
+            child.expect('Enter password to unlock {}: '.format(self._database_from.get_path()))
+            child.sendline(self._database_from.get_password())
+        child.expect('Database was not modified by merge operation.')
+        return child.before
